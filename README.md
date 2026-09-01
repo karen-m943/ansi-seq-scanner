@@ -82,7 +82,9 @@ tokens, err := ansiseq.NewScanner(ansiseq.WithLenient()).Tokenize(capturedLog)
 
 - **CSI** - `ESC [ params intermediates final` (SGR colors, cursor
   movement, erase, etc.) with numeric parameters split out, including
-  the private-marker byte (`?`, `<`, `=`, `>`) some CSI sequences use.
+  the private-marker byte (`?`, `<`, `=`, `>`) some CSI sequences use
+  and the colon-separated sub-parameters some terminals use for RGB SGR
+  values (`38:2:255:0:0`), exposed as `Sequence.SubParams`.
 - **OSC** - `ESC ] data` terminated by BEL or ST (window title,
   hyperlinks, clipboard).
 - **DCS** - `ESC P data ST` (Sixel graphics, tmux passthrough) as an
@@ -92,9 +94,6 @@ tokens, err := ansiseq.NewScanner(ansiseq.WithLenient()).Tokenize(capturedLog)
 
 ## Current limitations
 
-- CSI sub-parameters (the colon-separated form some terminals use for
-  RGB SGR values) are parsed as one non-numeric field and rejected in
-  strict mode.
 - 8-bit C1 control introducers (e.g. a raw `0x9B` in place of
   `ESC [`) aren't recognized - only the 7-bit `ESC`-prefixed forms.
 - Sequence *meaning* isn't decoded. `Sequence` gives you the parsed

@@ -147,7 +147,7 @@ func parseCSI(data []byte, start int) (Sequence, int, error) {
 	}
 	i++
 
-	params, err := parseParams(paramBytes)
+	params, subParams, err := parseParams(paramBytes)
 	if err != nil {
 		return Sequence{}, 0, &ParseError{Offset: start, Reason: err.Error()}
 	}
@@ -157,6 +157,7 @@ func parseCSI(data []byte, start int) (Sequence, int, error) {
 		Raw:           string(data[start:i]),
 		Private:       private,
 		Params:        params,
+		SubParams:     subParams,
 		Intermediates: append([]byte(nil), intermediates...),
 		Final:         final,
 	}, i, nil
@@ -177,32 +178,49 @@ func splitPrivateMarker(b []byte) (marker byte, rest []byte) {
 // parseParams splits a CSI parameter block on ';'. An empty field
 // (two consecutive ';', or an empty block) becomes -1, meaning
 // "omitted" - callers should treat that as the sequence's documented
-// default for that position. Colon-separated sub-parameters are not
-// yet supported and are rejected as non-numeric.
-func parseParams(b []byte) ([]int, error) {
+// default for that position.
+//
+// Each ';'-separated field may itself carry colon-separated
+// sub-parameters, as in the SGR true-color form "38:2:255:0:0". The
+// first colon-separated value becomes the field's entry in params;
+// any further values become subParams[idx], left nil when the field
+// had no colon.
+func parseParams(b []byte) (params []int, subParams [][]int, err error) {
 	if len(b) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	parts := strings.Split(string(b), ";")
 	if len(parts) > maxParams {
-		return nil, fmt.Errorf("too many CSI parameters (%d)", len(parts))
+		return nil, nil, fmt.Errorf("too many CSI parameters (%d)", len(parts))
 	}
-	params := make([]int, len(parts))
+	params = make([]int, len(parts))
+	subParams = make([][]int, len(parts))
 	for idx, p := range parts {
-		if p == "" {
-			params[idx] = -1
-			continue
+		values := strings.Split(p, ":")
+		if len(values) > maxParams {
+			return nil, nil, fmt.Errorf("too many CSI sub-parameters (%d)", len(values))
 		}
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return nil, fmt.Errorf("non-numeric CSI parameter %q", p)
+		nums := make([]int, len(values))
+		for vi, v := range values {
+			if v == "" {
+				nums[vi] = -1
+				continue
+			}
+			n, convErr := strconv.Atoi(v)
+			if convErr != nil {
+				return nil, nil, fmt.Errorf("non-numeric CSI parameter %q", v)
+			}
+			if n < 0 || n > maxParamValue {
+				return nil, nil, fmt.Errorf("CSI parameter %d out of range", n)
+			}
+			nums[vi] = n
 		}
-		if n < 0 || n > maxParamValue {
-			return nil, fmt.Errorf("CSI parameter %d out of range", n)
+		params[idx] = nums[0]
+		if len(nums) > 1 {
+			subParams[idx] = nums[1:]
 		}
-		params[idx] = n
 	}
-	return params, nil
+	return params, subParams, nil
 }
 
 // parseOSC parses ESC ] data, terminated by BEL or ESC \ (ST).

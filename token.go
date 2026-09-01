@@ -61,8 +61,15 @@ type Sequence struct {
 	Raw  string // exact bytes consumed, ESC through the final byte inclusive
 
 	// CSI / simple
-	Private       byte  // leading private-marker byte (one of < = > ?), 0 if none
-	Params        []int // numeric parameters; an omitted parameter is -1
+	Private byte  // leading private-marker byte (one of < = > ?), 0 if none
+	Params  []int // numeric parameters; an omitted parameter is -1
+
+	// SubParams holds colon-separated sub-parameters, indexed in parallel
+	// with Params. SubParams[i] is nil unless Params[i] was followed by
+	// one or more ':'-separated values, as in the SGR true-color form
+	// "38:2:255:0:0" (Params[i] is 38, SubParams[i] is [2 255 0 0]). An
+	// omitted sub-parameter (two consecutive ':') is -1, same as Params.
+	SubParams     [][]int
 	Intermediates []byte
 	Final         byte
 

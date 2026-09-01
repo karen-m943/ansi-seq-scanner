@@ -48,6 +48,55 @@ func TestTokenizeOmittedParam(t *testing.T) {
 	}
 }
 
+func TestTokenizeCSISubParams(t *testing.T) {
+	// "\x1b[38:2:255:0:0m" is the SGR true-color form: parameter 38
+	// carries three colon-separated sub-parameters (colorspace 2, then
+	// R, G, B).
+	tokens, err := NewScanner().Tokenize([]byte("\x1b[38:2:255:0:0m"))
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+	seq := tokens[0].Seq
+	if !reflect.DeepEqual(seq.Params, []int{38}) {
+		t.Fatalf("params = %v, want [38]", seq.Params)
+	}
+	if !reflect.DeepEqual(seq.SubParams, [][]int{{2, 255, 0, 0}}) {
+		t.Fatalf("subParams = %v, want [[2 255 0 0]]", seq.SubParams)
+	}
+}
+
+func TestTokenizeCSISubParamsMixedWithPlainParams(t *testing.T) {
+	// A field with no colon must leave SubParams nil at that index, even
+	// when other fields in the same sequence do have sub-parameters.
+	tokens, err := NewScanner().Tokenize([]byte("\x1b[1;4:3m"))
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+	seq := tokens[0].Seq
+	if !reflect.DeepEqual(seq.Params, []int{1, 4}) {
+		t.Fatalf("params = %v, want [1 4]", seq.Params)
+	}
+	if seq.SubParams[0] != nil {
+		t.Fatalf("subParams[0] = %v, want nil", seq.SubParams[0])
+	}
+	if !reflect.DeepEqual(seq.SubParams[1], []int{3}) {
+		t.Fatalf("subParams[1] = %v, want [3]", seq.SubParams[1])
+	}
+}
+
+func TestTokenizeCSISubParamsOmittedValue(t *testing.T) {
+	// An omitted sub-parameter ("4::3") becomes -1, same convention as
+	// an omitted top-level parameter.
+	tokens, err := NewScanner().Tokenize([]byte("\x1b[4::3m"))
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+	seq := tokens[0].Seq
+	if !reflect.DeepEqual(seq.SubParams[0], []int{-1, 3}) {
+		t.Fatalf("subParams[0] = %v, want [-1 3]", seq.SubParams[0])
+	}
+}
+
 func TestTokenizeOSC(t *testing.T) {
 	tokens, err := NewScanner().Tokenize([]byte("\x1b]0;window title\x07"))
 	if err != nil {
