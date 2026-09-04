@@ -14,12 +14,38 @@ const (
 	esc = 0x1B
 	bel = 0x07
 
+	// 8-bit C1 control codes. A terminal running in 8-bit mode can send
+	// these single bytes in place of the two-byte ESC-prefixed forms:
+	// 0x9B instead of "ESC [", 0x9D instead of "ESC ]", 0x90 instead of
+	// "ESC P", and 0x9C (ST) instead of "ESC \" as a terminator. They
+	// collide with UTF-8 continuation bytes, so a UTF-8-encoded payload
+	// that happens to contain one of these bytes as part of a multi-byte
+	// rune will be misread - real terminal output is 7-bit ESC almost
+	// universally for exactly this reason, but captured logs from older
+	// or 8-bit-mode sources do use them.
+	c1CSI = 0x9B
+	c1OSC = 0x9D
+	c1DCS = 0x90
+	c1ST  = 0x9C
+
 	// maxParams and maxParamValue bound how much a single malformed CSI
 	// sequence can make the scanner allocate. They are set well above
 	// anything a real terminal program emits (xterm caps at 16 params).
 	maxParams     = 32
 	maxParamValue = 16384
 )
+
+// isC1Introducer reports whether b is one of the 8-bit C1 bytes this
+// scanner recognizes as starting a sequence (as opposed to c1ST, which
+// only ever terminates one).
+func isC1Introducer(b byte) bool {
+	switch b {
+	case c1CSI, c1OSC, c1DCS:
+		return true
+	default:
+		return false
+	}
+}
 
 // ParseError is returned by Tokenize in strict mode when the input
 // contains a byte sequence that does not match the escape sequence
@@ -66,17 +92,19 @@ func NewScanner(opts ...Option) *Scanner {
 }
 
 // Tokenize walks data and returns it as a sequence of text and escape
-// tokens, in order. In strict mode (the default) it returns a
-// *ParseError on the first malformed or unterminated escape sequence
-// and no tokens. In lenient mode it never errors: an ESC byte that
-// cannot be parsed as a full sequence is emitted as a one-byte text
-// token and scanning continues from the next byte.
+// tokens, in order. Sequences may be introduced by ESC or by the
+// equivalent 8-bit C1 byte (0x9B for CSI, 0x9D for OSC, 0x90 for DCS).
+// In strict mode (the default) it returns a *ParseError on the first
+// malformed or unterminated escape sequence and no tokens. In lenient
+// mode it never errors: an introducer byte that cannot be parsed as a
+// full sequence is emitted as a one-byte text token and scanning
+// continues from the next byte.
 func (s *Scanner) Tokenize(data []byte) ([]Token, error) {
 	var tokens []Token
 	textStart := 0
 	i := 0
 	for i < len(data) {
-		if data[i] != esc {
+		if data[i] != esc && !isC1Introducer(data[i]) {
 			i++
 			continue
 		}
@@ -104,27 +132,38 @@ func (s *Scanner) Tokenize(data []byte) ([]Token, error) {
 }
 
 // parseEscape parses one escape sequence starting at data[start], where
-// data[start] == esc. It returns the parsed Sequence and the index of
-// the byte just past it.
+// data[start] is either esc or a recognized 8-bit C1 introducer. It
+// returns the parsed Sequence and the index of the byte just past it.
 func parseEscape(data []byte, start int) (Sequence, int, error) {
+	switch data[start] {
+	case c1CSI:
+		return parseCSI(data, start, 1)
+	case c1OSC:
+		return parseOSC(data, start, 1)
+	case c1DCS:
+		return parseDCS(data, start, 1)
+	}
+
 	if start+1 >= len(data) {
 		return Sequence{}, 0, &ParseError{Offset: start, Reason: "ESC at end of input with no following byte"}
 	}
 	switch data[start+1] {
 	case '[':
-		return parseCSI(data, start)
+		return parseCSI(data, start, 2)
 	case ']':
-		return parseOSC(data, start)
+		return parseOSC(data, start, 2)
 	case 'P':
-		return parseDCS(data, start)
+		return parseDCS(data, start, 2)
 	default:
 		return parseSimple(data, start)
 	}
 }
 
-// parseCSI parses ESC [ params intermediates final.
-func parseCSI(data []byte, start int) (Sequence, int, error) {
-	i := start + 2
+// parseCSI parses a CSI sequence's params, intermediates, and final
+// byte. headerLen is how many bytes the introducer itself took: 2 for
+// "ESC [", 1 for the 8-bit c1CSI byte.
+func parseCSI(data []byte, start, headerLen int) (Sequence, int, error) {
+	i := start + headerLen
 
 	paramStart := i
 	for i < len(data) && data[i] >= 0x30 && data[i] <= 0x3F {
@@ -223,9 +262,11 @@ func parseParams(b []byte) (params []int, subParams [][]int, err error) {
 	return params, subParams, nil
 }
 
-// parseOSC parses ESC ] data, terminated by BEL or ESC \ (ST).
-func parseOSC(data []byte, start int) (Sequence, int, error) {
-	i := start + 2
+// parseOSC parses an OSC payload, terminated by BEL, ESC \ (ST), or the
+// bare 8-bit c1ST byte. headerLen is how many bytes the introducer
+// itself took: 2 for "ESC ]", 1 for the 8-bit c1OSC byte.
+func parseOSC(data []byte, start, headerLen int) (Sequence, int, error) {
+	i := start + headerLen
 	dataStart := i
 	for i < len(data) {
 		switch {
@@ -235,6 +276,13 @@ func parseOSC(data []byte, start int) (Sequence, int, error) {
 				Raw:   string(data[start : i+1]),
 				Data:  string(data[dataStart:i]),
 				Final: bel,
+			}, i + 1, nil
+		case data[i] == c1ST:
+			return Sequence{
+				Type:  SeqOSC,
+				Raw:   string(data[start : i+1]),
+				Data:  string(data[dataStart:i]),
+				Final: c1ST,
 			}, i + 1, nil
 		case data[i] == esc:
 			if i+1 < len(data) && data[i+1] == '\\' {
@@ -253,14 +301,24 @@ func parseOSC(data []byte, start int) (Sequence, int, error) {
 	return Sequence{}, 0, &ParseError{Offset: start, Reason: "unterminated OSC sequence"}
 }
 
-// parseDCS parses ESC P data, terminated by ESC \ (ST). Unlike OSC,
-// DCS never terminates on BEL. The parameter/intermediate prefix that
-// can precede a DCS payload is treated as part of Data for now.
-func parseDCS(data []byte, start int) (Sequence, int, error) {
-	i := start + 2
+// parseDCS parses a DCS payload, terminated by ESC \ (ST) or the bare
+// 8-bit c1ST byte. Unlike OSC, DCS never terminates on BEL. The
+// parameter/intermediate prefix that can precede a DCS payload is
+// treated as part of Data for now. headerLen is how many bytes the
+// introducer itself took: 2 for "ESC P", 1 for the 8-bit c1DCS byte.
+func parseDCS(data []byte, start, headerLen int) (Sequence, int, error) {
+	i := start + headerLen
 	dataStart := i
 	for i < len(data) {
-		if data[i] == esc {
+		switch {
+		case data[i] == c1ST:
+			return Sequence{
+				Type:  SeqDCS,
+				Raw:   string(data[start : i+1]),
+				Data:  string(data[dataStart:i]),
+				Final: c1ST,
+			}, i + 1, nil
+		case data[i] == esc:
 			if i+1 < len(data) && data[i+1] == '\\' {
 				return Sequence{
 					Type:  SeqDCS,
@@ -270,8 +328,9 @@ func parseDCS(data []byte, start int) (Sequence, int, error) {
 				}, i + 2, nil
 			}
 			return Sequence{}, 0, &ParseError{Offset: start, Reason: "ESC inside DCS string not followed by '\\' (malformed terminator)"}
+		default:
+			i++
 		}
-		i++
 	}
 	return Sequence{}, 0, &ParseError{Offset: start, Reason: "unterminated DCS sequence"}
 }

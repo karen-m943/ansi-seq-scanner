@@ -84,18 +84,25 @@ tokens, err := ansiseq.NewScanner(ansiseq.WithLenient()).Tokenize(capturedLog)
   movement, erase, etc.) with numeric parameters split out, including
   the private-marker byte (`?`, `<`, `=`, `>`) some CSI sequences use
   and the colon-separated sub-parameters some terminals use for RGB SGR
-  values (`38:2:255:0:0`), exposed as `Sequence.SubParams`.
-- **OSC** - `ESC ] data` terminated by BEL or ST (window title,
-  hyperlinks, clipboard).
+  values (`38:2:255:0:0`), exposed as `Sequence.SubParams`. The 8-bit
+  C1 introducer `0x9B` is recognized as well as `ESC [`.
+- **OSC** - `ESC ] data` terminated by BEL, ST (`ESC \`), or the 8-bit
+  ST byte `0x9C` (window title, hyperlinks, clipboard). The 8-bit C1
+  introducer `0x9D` is recognized as well as `ESC ]`.
 - **DCS** - `ESC P data ST` (Sixel graphics, tmux passthrough) as an
-  opaque payload.
+  opaque payload. The 8-bit C1 introducer `0x90` is recognized as well
+  as `ESC P`.
 - **Simple ESC forms** - both the bare kind (`ESC 7`, `ESC c`) and the
   one-intermediate kind (`ESC ( B`).
 
+8-bit C1 bytes (`0x80`-`0x9F`) overlap with UTF-8 continuation bytes,
+so recognizing them is only safe when the input isn't UTF-8 text with
+codepoints above `U+007F` in it - real terminal output is 7-bit `ESC`
+almost universally for this reason, but some captured logs and
+8-bit-mode sources use the C1 forms.
+
 ## Current limitations
 
-- 8-bit C1 control introducers (e.g. a raw `0x9B` in place of
-  `ESC [`) aren't recognized - only the 7-bit `ESC`-prefixed forms.
 - Sequence *meaning* isn't decoded. `Sequence` gives you the parsed
   grammar (type, params, final byte); mapping `params == [31]` to "set
   foreground red" is left to the caller for now.

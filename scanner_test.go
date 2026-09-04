@@ -110,6 +110,49 @@ func TestTokenizeOSC(t *testing.T) {
 	}
 }
 
+func TestTokenizeC1CSI(t *testing.T) {
+	// 0x9B is the 8-bit C1 form of "ESC [".
+	tokens, err := NewScanner().Tokenize([]byte("\x9B31mhello"))
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+	seq := tokens[0].Seq
+	if seq.Type != SeqCSI || seq.Final != 'm' || !reflect.DeepEqual(seq.Params, []int{31}) {
+		t.Fatalf("seq = %+v, want CSI 'm' params [31]", seq)
+	}
+	if seq.Raw != "\x9B31m" {
+		t.Fatalf("raw = %q, want %q", seq.Raw, "\x9B31m")
+	}
+	if tokens[1].Kind != Text || tokens[1].Text != "hello" {
+		t.Fatalf("token 1 = %+v, want text %q", tokens[1], "hello")
+	}
+}
+
+func TestTokenizeC1OSC(t *testing.T) {
+	// 0x9D is the 8-bit C1 form of "ESC ]"; 0x9C (ST) terminates it
+	// without needing "ESC \".
+	tokens, err := NewScanner().Tokenize([]byte("\x9D0;title\x9C"))
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+	seq := tokens[0].Seq
+	if seq.Type != SeqOSC || seq.Data != "0;title" || seq.Final != 0x9C {
+		t.Fatalf("seq = %+v, want OSC data %q final 0x9C", seq, "0;title")
+	}
+}
+
+func TestTokenizeC1DCS(t *testing.T) {
+	// 0x90 is the 8-bit C1 form of "ESC P"; 0x9C (ST) terminates it.
+	tokens, err := NewScanner().Tokenize([]byte("\x90payload\x9C"))
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+	seq := tokens[0].Seq
+	if seq.Type != SeqDCS || seq.Data != "payload" || seq.Final != 0x9C {
+		t.Fatalf("seq = %+v, want DCS data %q final 0x9C", seq, "payload")
+	}
+}
+
 func TestTokenizeSimple(t *testing.T) {
 	tokens, err := NewScanner().Tokenize([]byte("\x1b(B"))
 	if err != nil {
