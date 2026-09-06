@@ -59,6 +59,18 @@ func main() {
 }
 ```
 
+If all you want is the text with escape sequences stripped out, and you
+don't care whether the input was well-formed, `Strip` skips the
+Tokenize/PlainText round trip:
+
+```go
+fmt.Println(ansiseq.Strip(out)) // "BUILD OK in 4.2s\n"
+```
+
+`Strip` always uses lenient parsing internally, since code that just
+wants the visible text usually wants it even from truncated or
+malformed input.
+
 By default, `Tokenize` returns a `*ParseError` the moment it hits a
 byte sequence that starts with ESC but doesn't resolve to a complete,
 valid sequence - an unterminated CSI sequence at the end of a buffer,

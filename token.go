@@ -96,3 +96,14 @@ func PlainText(tokens []Token) string {
 	}
 	return b.String()
 }
+
+// Strip removes every escape sequence from data and returns what's left.
+// It's a shortcut for the common case of PlainText(NewScanner(WithLenient()).Tokenize(data)):
+// lenient, because code that just wants the visible text usually wants it
+// even when the input is truncated or otherwise malformed, not a
+// *ParseError in its place. Callers that need to know whether the input
+// was well-formed should call Tokenize directly instead.
+func Strip(data []byte) string {
+	tokens, _ := NewScanner(WithLenient()).Tokenize(data)
+	return PlainText(tokens)
+}

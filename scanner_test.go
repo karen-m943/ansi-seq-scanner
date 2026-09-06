@@ -201,3 +201,20 @@ func TestPlainTextStripsEscapes(t *testing.T) {
 		t.Fatalf("PlainText = %q, want %q", got, want)
 	}
 }
+
+func TestStrip(t *testing.T) {
+	in := []byte("\x1b[1mbold\x1b[0m and \x1b]0;title\x07plain")
+	if got, want := Strip(in), "bold and plain"; got != want {
+		t.Fatalf("Strip = %q, want %q", got, want)
+	}
+}
+
+func TestStripToleratesMalformedInput(t *testing.T) {
+	// Strip is meant for the "just give me the text" case, so it must
+	// never fail even on truncated or invalid escape sequences - unlike
+	// Tokenize in strict mode, which would return a *ParseError here.
+	in := []byte("keep\x1b[31")
+	if got, want := Strip(in), "keep\x1b[31"; got != want {
+		t.Fatalf("Strip = %q, want %q", got, want)
+	}
+}
