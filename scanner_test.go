@@ -143,13 +143,51 @@ func TestTokenizeC1OSC(t *testing.T) {
 
 func TestTokenizeC1DCS(t *testing.T) {
 	// 0x90 is the 8-bit C1 form of "ESC P"; 0x9C (ST) terminates it.
-	tokens, err := NewScanner().Tokenize([]byte("\x90payload\x9C"))
+	// 'q' is the Sixel command byte; everything after it up to the
+	// terminator is opaque data.
+	tokens, err := NewScanner().Tokenize([]byte("\x90qpayload\x9C"))
 	if err != nil {
 		t.Fatalf("Tokenize: %v", err)
 	}
 	seq := tokens[0].Seq
-	if seq.Type != SeqDCS || seq.Data != "payload" || seq.Final != 0x9C {
-		t.Fatalf("seq = %+v, want DCS data %q final 0x9C", seq, "payload")
+	if seq.Type != SeqDCS || seq.Command != 'q' || seq.Data != "payload" || seq.Final != 0x9C {
+		t.Fatalf("seq = %+v, want DCS command 'q' data %q final 0x9C", seq, "payload")
+	}
+}
+
+func TestTokenizeDCSHeader(t *testing.T) {
+	// DECRQSS-style header: params "1;2", intermediate '$', command
+	// 'q', followed by opaque data terminated by ESC \.
+	tokens, err := NewScanner().Tokenize([]byte("\x1bP1;2$qpayload\x1b\\"))
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+	seq := tokens[0].Seq
+	if seq.Type != SeqDCS {
+		t.Fatalf("type = %v, want SeqDCS", seq.Type)
+	}
+	if !reflect.DeepEqual(seq.Params, []int{1, 2}) {
+		t.Fatalf("params = %v, want [1 2]", seq.Params)
+	}
+	if string(seq.Intermediates) != "$" {
+		t.Fatalf("intermediates = %q, want %q", seq.Intermediates, "$")
+	}
+	if seq.Command != 'q' {
+		t.Fatalf("command = %q, want 'q'", seq.Command)
+	}
+	if seq.Data != "payload" {
+		t.Fatalf("data = %q, want %q", seq.Data, "payload")
+	}
+	if seq.Final != '\\' {
+		t.Fatalf("final = %q, want '\\\\'", seq.Final)
+	}
+}
+
+func TestStrictRejectsDCSWithoutCommandByte(t *testing.T) {
+	_, err := NewScanner().Tokenize([]byte("\x1bP\x9C"))
+	var parseErr *ParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("err = %v, want *ParseError", err)
 	}
 }
 

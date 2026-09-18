@@ -33,6 +33,8 @@ func FuzzTokenize(f *testing.F) {
 		"\x1b]0;window title\x07",
 		"\x1b]0;window title\x1b\\",
 		"\x1bPq payload\x1b\\",
+		"\x1bP1;2$qpayload\x1b\\",
+		"\x1bP\x1b\\",
 		"\x1b(B",
 		"\x1b7",
 		"\x9B31mhello",

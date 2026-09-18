@@ -31,7 +31,8 @@ const (
 	SeqCSI SeqType = iota
 	// SeqOSC is ESC ] data (BEL | ST) (window title, hyperlinks, ...).
 	SeqOSC
-	// SeqDCS is ESC P data ST (device control strings, e.g. Sixel, tmux passthrough).
+	// SeqDCS is ESC P params intermediates command data ST (device
+	// control strings, e.g. Sixel, tmux passthrough).
 	SeqDCS
 	// SeqSimple is a two- or three-byte escape with no parameter block,
 	// e.g. ESC 7 (save cursor) or ESC ( B (select ASCII charset).
@@ -54,15 +55,18 @@ func (t SeqType) String() string {
 }
 
 // Sequence holds the parsed structure of one escape sequence. Which fields
-// are populated depends on Type: Params/Private/Intermediates belong to
-// SeqCSI and SeqSimple, Data belongs to SeqOSC and SeqDCS.
+// are populated depends on Type: Params/Private/SubParams belong to SeqCSI
+// and SeqDCS, Intermediates belongs to all but SeqOSC, Data belongs to
+// SeqOSC and SeqDCS, and Command belongs only to SeqDCS.
 type Sequence struct {
 	Type SeqType
-	Raw  string // exact bytes consumed, ESC through the final byte inclusive
+	Raw  string // exact bytes consumed, ESC through the terminator inclusive
 
-	// CSI / simple
-	Private byte  // leading private-marker byte (one of < = > ?), 0 if none
-	Params  []int // numeric parameters; an omitted parameter is -1
+	// Private is the leading private-marker byte (one of < = > ?) of a
+	// CSI or DCS parameter block, 0 if none.
+	Private byte
+	// Params holds numeric parameters; an omitted parameter is -1.
+	Params []int
 
 	// SubParams holds colon-separated sub-parameters, indexed in parallel
 	// with Params. SubParams[i] is nil unless Params[i] was followed by
@@ -71,10 +75,24 @@ type Sequence struct {
 	// omitted sub-parameter (two consecutive ':') is -1, same as Params.
 	SubParams     [][]int
 	Intermediates []byte
-	Final         byte
 
-	// OSC / DCS
-	Data string // payload between the introducer and the terminator
+	// Final is the byte that ends the sequence's grammar for SeqCSI and
+	// SeqSimple. For SeqOSC and SeqDCS it instead identifies which
+	// terminator closed the string: bel, c1ST, or '\\' (the second byte
+	// of the two-byte ST form "ESC \").
+	Final byte
+
+	// Command is the byte that ends a DCS header and marks the start of
+	// its data payload, e.g. 'q' for Sixel graphics, or the byte
+	// following one or more intermediates as in DECRQSS's "$q". It
+	// follows the same grammar as a CSI final byte but doesn't end the
+	// sequence - the data payload and terminator still follow it.
+	// SeqDCS only.
+	Command byte
+
+	// Data is the payload between a DCS's command byte (or an OSC's
+	// introducer) and the terminator.
+	Data string
 }
 
 // Token is either a run of ordinary text or one parsed escape sequence.

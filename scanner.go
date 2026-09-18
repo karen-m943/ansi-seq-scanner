@@ -29,8 +29,9 @@ const (
 	c1ST  = 0x9C
 
 	// maxParams and maxParamValue bound how much a single malformed CSI
-	// sequence can make the scanner allocate. They are set well above
-	// anything a real terminal program emits (xterm caps at 16 params).
+	// or DCS header can make the scanner allocate. They are set well
+	// above anything a real terminal program emits (xterm caps at 16
+	// params).
 	maxParams     = 32
 	maxParamValue = 16384
 )
@@ -301,30 +302,71 @@ func parseOSC(data []byte, start, headerLen int) (Sequence, int, error) {
 	return Sequence{}, 0, &ParseError{Offset: start, Reason: "unterminated OSC sequence"}
 }
 
-// parseDCS parses a DCS payload, terminated by ESC \ (ST) or the bare
-// 8-bit c1ST byte. Unlike OSC, DCS never terminates on BEL. The
-// parameter/intermediate prefix that can precede a DCS payload is
-// treated as part of Data for now. headerLen is how many bytes the
-// introducer itself took: 2 for "ESC P", 1 for the 8-bit c1DCS byte.
+// parseDCS parses a DCS sequence. Like CSI, its header is params
+// (0x30-0x3F), then intermediates (0x20-0x2F), then a single command
+// byte (0x40-0x7E) that identifies the specific DCS function - 'q' for
+// Sixel graphics, or the byte after an intermediate as in DECRQSS's
+// "$q". Unlike CSI, the command byte doesn't end the sequence: an
+// opaque data payload follows it, terminated by ESC \ (ST) or the bare
+// 8-bit c1ST byte. DCS never terminates on BEL, unlike OSC. headerLen
+// is how many bytes the introducer itself took: 2 for "ESC P", 1 for
+// the 8-bit c1DCS byte.
 func parseDCS(data []byte, start, headerLen int) (Sequence, int, error) {
 	i := start + headerLen
+
+	paramStart := i
+	for i < len(data) && data[i] >= 0x30 && data[i] <= 0x3F {
+		i++
+	}
+	private, paramBytes := splitPrivateMarker(data[paramStart:i])
+
+	intStart := i
+	for i < len(data) && data[i] >= 0x20 && data[i] <= 0x2F {
+		i++
+	}
+	intermediates := data[intStart:i]
+
+	if i >= len(data) {
+		return Sequence{}, 0, &ParseError{Offset: start, Reason: "unterminated DCS sequence (no command byte)"}
+	}
+	command := data[i]
+	if command < 0x40 || command > 0x7E {
+		return Sequence{}, 0, &ParseError{Offset: start, Reason: fmt.Sprintf("invalid DCS command byte 0x%02X", command)}
+	}
+	i++
+
+	params, subParams, err := parseParams(paramBytes)
+	if err != nil {
+		return Sequence{}, 0, &ParseError{Offset: start, Reason: err.Error()}
+	}
+
 	dataStart := i
 	for i < len(data) {
 		switch {
 		case data[i] == c1ST:
 			return Sequence{
-				Type:  SeqDCS,
-				Raw:   string(data[start : i+1]),
-				Data:  string(data[dataStart:i]),
-				Final: c1ST,
+				Type:          SeqDCS,
+				Raw:           string(data[start : i+1]),
+				Private:       private,
+				Params:        params,
+				SubParams:     subParams,
+				Intermediates: append([]byte(nil), intermediates...),
+				Command:       command,
+				Data:          string(data[dataStart:i]),
+				Final:         c1ST,
 			}, i + 1, nil
 		case data[i] == esc:
 			if i+1 < len(data) && data[i+1] == '\\' {
 				return Sequence{
-					Type:  SeqDCS,
-					Raw:   string(data[start : i+2]),
-					Data:  string(data[dataStart:i]),
-					Final: '\\',
+					Type:          SeqDCS,
+					Raw:           string(data[start : i+2]),
+					Private:       private,
+					Params:        params,
+					SubParams:     subParams,
+					Intermediates: append([]byte(nil), intermediates...),
+					Command:       command,
+					Data:          string(data[dataStart:i]),
+					Final:         '\\',
 				}, i + 2, nil
 			}
 			return Sequence{}, 0, &ParseError{Offset: start, Reason: "ESC inside DCS string not followed by '\\' (malformed terminator)"}

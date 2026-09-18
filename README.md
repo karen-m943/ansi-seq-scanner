@@ -101,9 +101,13 @@ tokens, err := ansiseq.NewScanner(ansiseq.WithLenient()).Tokenize(capturedLog)
 - **OSC** - `ESC ] data` terminated by BEL, ST (`ESC \`), or the 8-bit
   ST byte `0x9C` (window title, hyperlinks, clipboard). The 8-bit C1
   introducer `0x9D` is recognized as well as `ESC ]`.
-- **DCS** - `ESC P data ST` (Sixel graphics, tmux passthrough) as an
-  opaque payload. The 8-bit C1 introducer `0x90` is recognized as well
-  as `ESC P`.
+- **DCS** - `ESC P params intermediates command data ST` (Sixel
+  graphics, tmux passthrough, DECRQSS). The header before the payload
+  parses the same way CSI's does - numeric parameters, intermediates,
+  and a command byte identifying the specific DCS function (`'q'` for
+  Sixel, for example) - and the data string after it is left opaque,
+  since its format depends on the command. The 8-bit C1 introducer
+  `0x90` is recognized as well as `ESC P`.
 - **Simple ESC forms** - both the bare kind (`ESC 7`, `ESC c`) and the
   one-intermediate kind (`ESC ( B`).
 
