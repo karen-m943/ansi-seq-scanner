@@ -229,6 +229,20 @@ func TestLenientPassesThroughMalformedInput(t *testing.T) {
 	}
 }
 
+func TestLenientKeepsUnparsedC1BytesVerbatim(t *testing.T) {
+	// A lone C1 introducer that fails to parse must come back as the
+	// same single byte, not as its UTF-8 encoded code point.
+	for _, in := range []string{"\x9B", "\x9D", "\x90", "a\x9Bb", "\x9D no terminator"} {
+		tokens, err := NewScanner(WithLenient()).Tokenize([]byte(in))
+		if err != nil {
+			t.Fatalf("Tokenize(%q): %v", in, err)
+		}
+		if got := reconstruct(tokens); got != in {
+			t.Fatalf("reconstruct(Tokenize(%q)) = %q", in, got)
+		}
+	}
+}
+
 func TestPlainTextStripsEscapes(t *testing.T) {
 	in := []byte("\x1b[1mbold\x1b[0m and \x1b]0;title\x07plain")
 	tokens, err := NewScanner().Tokenize(in)

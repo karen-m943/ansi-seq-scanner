@@ -117,7 +117,9 @@ func (s *Scanner) Tokenize(data []byte) ([]Token, error) {
 			if !s.lenient {
 				return nil, err
 			}
-			tokens = append(tokens, Token{Kind: Text, Text: string(data[i])})
+			// Slice rather than string(data[i]): converting a lone byte
+			// would encode it as a rune, turning 0x9B into "\xc2\x9b".
+			tokens = append(tokens, Token{Kind: Text, Text: string(data[i : i+1])})
 			i++
 			textStart = i
 			continue
